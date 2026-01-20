@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 app = FastAPI()
 
-# CORS
+# 適用 Zeabur 的 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 新版 Cobalt API（2026）
+# Cobalt 2026 最新 API
 COBALT_API_URL = "https://api.cobalt.tools/api/json"
 
 class DownloadRequest(BaseModel):
@@ -34,46 +34,103 @@ async def index():
 
 @app.post("/api/download")
 async def download(req: DownloadRequest):
-    url = req.url.strip()
-    parsed = urlparse(url)
-    if not parsed.scheme.startswith("http"):
-        raise HTTPException(400, "無效 URL")
-
-    payload = {
-        "url": url,
-        "vCodec": "h264",
-        "vQuality": "1080",
-        "aFormat": "mp3",
-        "filenamePattern": "basic"
-    }
+    steps = []  # 用來回報每一步狀態
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.post(COBALT_API_URL, json=payload)
+        # ===== Step 1: 驗證 URL =====
+        steps.append("Step 1: validating URL…")
+        url = req.url.strip()
+        parsed = urlparse(url)
+        if not parsed.scheme.startswith("http"):
+            raise HTTPException(400, "無效連結（URL 格式錯誤）")
 
-        if res.status_code != 200:
-            raise HTTPException(res.status_code, f"Cobalt API 錯誤: {res.text}")
+        # ===== Step 2: 準備 payload =====
+        steps.append("Step 2: preparing request payload…")
+        payload = {
+            "url": url,
+            "vCodec": "h264",
+            "vQuality": "1080",
+            "aFormat": "mp3",
+            "filenamePattern": "basic"
+        }
 
-        data = res.json()
+        # ===== Step 3: 發送 API 請求 =====
+        steps.append("Step 3: sending request to Cobalt API…")
 
-        # 新版 API 回傳格式
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True
+        ) as client:
+            response = await client.post(COBALT_API_URL, json=payload)
+
+        # ===== Step 4: 已收到 Cobalt 回應 =====
+        steps.append(f"Step 4: received response from Cobalt (HTTP {response.status_code})")
+
+        # ===== Step 5: 嘗試解析 JSON =====
+        steps.append("Step 5: parsing JSON response…")
+
+        try:
+            data = response.json()
+        except Exception:
+            raise HTTPException(
+                500,
+                detail={
+                    "message": "Cobalt 回傳非 JSON（可能被 Cloudflare human-check 擋下）",
+                    "steps": steps,
+                    "rawText": response.text[:500]
+                }
+            )
+
+        # ===== Step 6: 檢查 Cobalt 的結果 =====
         if data.get("status") == "ok" and data.get("url"):
+            steps.append("Step 6: Cobalt returned valid download info.")
             return {
                 "success": True,
                 "downloadUrl": data["url"],
                 "filename": data.get("filename", "video"),
                 "title": data.get("title", ""),
-                "source": "cobalt-2026"
+                "steps": steps,
+                "rawResponse": data
             }
 
-        raise HTTPException(400, data.get("error", "Cobalt 回傳無效資料"))
+        # ===== Step 6b: Cobalt 回傳錯誤 =====
+        steps.append("Step 6: Cobalt returned an error message.")
+        raise HTTPException(
+            400,
+            detail={
+                "message": data.get("error", "Cobalt 未提供可用下載連結"),
+                "steps": steps,
+                "rawResponse": data
+            }
+        )
 
+    except HTTPException as e:
+        # e.detail 可以是字串或 dict，全部包進回傳
+        raise HTTPException(
+            e.status_code,
+            detail={
+                "message": e.detail,
+                "steps": steps
+            }
+        )
     except httpx.TimeoutException:
-        raise HTTPException(408, "Cobalt API 超時")
+        steps.append("Timeout: Cobalt API 未在 30 秒內回應")
+        raise HTTPException(408, {"message": "Cobalt API 請求超時", "steps": steps})
     except Exception as e:
-        raise HTTPException(500, f"後端錯誤: {str(e)}")
+        steps.append("Unexpected backend error.")
+        raise HTTPException(
+            500,
+            detail={
+                "message": str(e),
+                "steps": steps
+            }
+        )
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "healthy", "api": "cobalt-2026"}
+    return {
+        "status": "healthy",
+        "api": "cobalt-2026",
+        "environment": "zeabur-compatible"
+    }
