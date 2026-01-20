@@ -1,13 +1,18 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
-import subprocess
-import json
-import tempfile
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-class Req(BaseModel):
-    url: str
+# 加入 CORS middleware - 允許所有網域
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # 允許所有網域
+    allow_credentials=False,       # 使用 * 時必須設為 False
+    allow_methods=["*"],          # 允許所有 HTTP 方法
+    allow_headers=["*"],          # 允許所有標頭
+)
+
+# 你原本的路由...
 
 @app.post("/extract")
 async def extract(req: Req):
