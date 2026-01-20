@@ -22,7 +22,7 @@ class DownloadRequest(BaseModel):
 @app.get("/")  
 async def root():  
     """返回前端頁面"""  
-    return FileResponse("templates/index.html", media_type="text/html")  
+    return FileResponse("index.html", media_type="text/html")  
 @app.post("/api/download")  
 async def download(req: DownloadRequest):  
     """  
